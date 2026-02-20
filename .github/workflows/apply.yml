@@ -6,6 +6,7 @@ on:
 jobs:
   submit:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
     steps:

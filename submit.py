@@ -3,8 +3,10 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -16,6 +18,15 @@ RESUME_LINK = "https://example.com/resume-placeholder"
 REPOSITORY_LINK = "https://github.com/iconifyit/b12-application"
 
 SUBMISSION_URL = "https://b12.io/apply/submission"
+
+# ── Request settings ────────────────────────────────────────────────
+CONNECT_TIMEOUT = 5      # seconds to establish a connection
+READ_TIMEOUT = 15        # seconds to wait for a response body
+MAX_RETRIES = 3
+INITIAL_BACKOFF = 1.0    # seconds; doubles each retry
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+log = logging.getLogger(__name__)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -54,37 +65,115 @@ def sign(body: bytes, secret: str) -> str:
 
 
 def submit(payload_bytes: bytes, signature: str) -> str:
-    """POST the signed payload and return the receipt string."""
+    """POST the signed payload with retry/backoff and return the receipt.
+
+    Retries on transient network errors and retryable HTTP status codes
+    (429, 5xx) using exponential backoff. Raises immediately on client
+    errors (4xx other than 429) since those indicate a bad payload or
+    signature and retrying won't help.
+    """
     headers = {
         "Content-Type": "application/json",
         "X-Signature-256": signature,
     }
-    resp = requests.post(SUBMISSION_URL, data=payload_bytes, headers=headers)
-    resp.raise_for_status()
-    data = resp.json()
-    receipt = data.get("receipt")
-    if receipt is None:
-        raise ValueError(f"No receipt in response: {data}")
-    return receipt
+
+    last_exception: BaseException | None = None
+    backoff = INITIAL_BACKOFF
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            log.info("POST %s (attempt %d/%d)", SUBMISSION_URL, attempt, MAX_RETRIES)
+            resp = requests.post(
+                SUBMISSION_URL,
+                data=payload_bytes,
+                headers=headers,
+                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+            )
+
+            if resp.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
+                log.warning(
+                    "Retryable HTTP %d on attempt %d; backing off %.1fs",
+                    resp.status_code, attempt, backoff,
+                )
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+
+            resp.raise_for_status()
+
+            data = resp.json()
+            receipt = data.get("receipt")
+            if receipt is None:
+                raise ValueError(f"No receipt in response: {data}")
+            return receipt
+
+        except requests.ConnectionError as exc:
+            last_exception = exc
+            if attempt < MAX_RETRIES:
+                log.warning(
+                    "Connection error on attempt %d; backing off %.1fs: %s",
+                    attempt, backoff, exc,
+                )
+                time.sleep(backoff)
+                backoff *= 2
+            else:
+                raise
+
+        except requests.Timeout as exc:
+            last_exception = exc
+            if attempt < MAX_RETRIES:
+                log.warning(
+                    "Timeout on attempt %d; backing off %.1fs: %s",
+                    attempt, backoff, exc,
+                )
+                time.sleep(backoff)
+                backoff *= 2
+            else:
+                raise
+
+    # Should only be reached if all retries returned a retryable status code
+    raise requests.HTTPError(
+        f"All {MAX_RETRIES} attempts failed (last status: {resp.status_code})",
+        response=resp,
+    )
 
 
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main() -> None:
+    logging.basicConfig(
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        level=logging.INFO,
+    )
+
     secret = os.environ.get("SIGNING_SECRET")
     if not secret:
-        print("ERROR: SIGNING_SECRET environment variable is not set.", file=sys.stderr)
+        log.error("SIGNING_SECRET environment variable is not set.")
         sys.exit(1)
 
     payload = build_payload()
     body = canonicalize(payload)
     signature = sign(body, secret)
 
-    print(f"Payload: {body.decode('utf-8')}")
-    print(f"Signature: {signature}")
+    log.info("Payload: %s", body.decode("utf-8"))
+    log.info("Signature: %s", signature)
 
-    receipt = submit(body, signature)
-    print(f"Receipt: {receipt}")
+    try:
+        receipt = submit(body, signature)
+    except requests.HTTPError as exc:
+        log.error("Submission failed with HTTP error: %s", exc)
+        sys.exit(2)
+    except requests.ConnectionError as exc:
+        log.error("Could not connect to %s: %s", SUBMISSION_URL, exc)
+        sys.exit(3)
+    except requests.Timeout as exc:
+        log.error("Request to %s timed out: %s", SUBMISSION_URL, exc)
+        sys.exit(4)
+    except ValueError as exc:
+        log.error("Unexpected response: %s", exc)
+        sys.exit(5)
+
+    log.info("Receipt: %s", receipt)
 
 
 if __name__ == "__main__":
