@@ -1,11 +1,12 @@
 name: Apply to B12
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Manual trigger only — won't run on push or PR
 
 jobs:
   submit:
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
     steps:
@@ -15,10 +16,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: pip install requests
 
       - name: Submit application
+        env:
+          SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
         run: python submit.py
