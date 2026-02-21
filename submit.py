@@ -12,12 +12,11 @@ from datetime import datetime, timezone
 import requests
 
 # ── Application details ─────────────────────────────────────────────
-NAME = "Scott Lewis"
-EMAIL = "scott@sketchandbuild.com"
-RESUME_LINK = "https://example.com/resume-placeholder"
+NAME            = "Scott Lewis"
+EMAIL           = "scott@sketchandbuild.com"
 REPOSITORY_LINK = "https://github.com/iconifyit/b12-application"
-
-SUBMISSION_URL = "https://b12.io/apply/submission"
+RESUME_LINK     = "https://sketchandbuild.com/assets/b12/resume.pdf"
+SUBMISSION_URL  = "https://b12.io/apply/submission"
 
 # ── Request settings ────────────────────────────────────────────────
 CONNECT_TIMEOUT = 5      # seconds to establish a connection
@@ -173,7 +172,7 @@ def main() -> None:
         log.error("Unexpected response: %s", exc)
         sys.exit(5)
 
-    log.info("Receipt: %s", receipt)
+    print(receipt)
 
 
 if __name__ == "__main__":
