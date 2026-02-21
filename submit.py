@@ -12,12 +12,11 @@ from datetime import datetime, timezone
 import requests
 
 # ── Application details ─────────────────────────────────────────────
-NAME = "Scott Lewis"
-EMAIL = "scott@sketchandbuild.com"
-RESUME_LINK = "https://example.com/resume-placeholder"
+NAME            = "Scott Lewis"
+EMAIL           = "scott@sketchandbuild.com"
 REPOSITORY_LINK = "https://github.com/iconifyit/b12-application"
-
-SUBMISSION_URL = "https://b12.io/apply/submission"
+RESUME_LINK     = "https://sketchandbuild.com/assets/b12/resume.pdf"
+SUBMISSION_URL  = "https://b12.io/apply/submission"
 
 # ── Request settings ────────────────────────────────────────────────
 CONNECT_TIMEOUT = 5      # seconds to establish a connection
@@ -31,12 +30,13 @@ log = logging.getLogger(__name__)
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+# Get the current time in UTC and format as ISO 8601 with milliseconds and 'Z' suffix.
 def utc_timestamp() -> str:
     """Return the current UTC time as ISO 8601 with milliseconds, ending in 'Z'."""
     now = datetime.now(timezone.utc)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
-
+# Builds the payload with the required fields.
 def build_payload() -> dict:
     """Assemble the application payload from env vars and constants."""
     repo = os.environ.get("GITHUB_REPOSITORY", "iconifyit/b12-application")
@@ -52,18 +52,18 @@ def build_payload() -> dict:
         "timestamp": utc_timestamp(),
     }
 
-
+# Canonicalization and signing must be exact to match the expected signature.
 def canonicalize(payload: dict) -> bytes:
     """Serialize payload as compact, key-sorted JSON encoded to UTF-8."""
     return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
-
+# The signing secret is shared between the application and the server.
 def sign(body: bytes, secret: str) -> str:
     """Compute HMAC-SHA256 and return 'sha256=<hex_digest>'."""
     digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return f"sha256={digest}"
 
-
+# The submission function implements retry logic with exponential backoff for transient errors.
 def submit(payload_bytes: bytes, signature: str) -> str:
     """POST the signed payload with retry/backoff and return the receipt.
 
@@ -77,7 +77,6 @@ def submit(payload_bytes: bytes, signature: str) -> str:
         "X-Signature-256": signature,
     }
 
-    last_exception: BaseException | None = None
     backoff = INITIAL_BACKOFF
 
     for attempt in range(1, MAX_RETRIES + 1):
@@ -101,14 +100,19 @@ def submit(payload_bytes: bytes, signature: str) -> str:
 
             resp.raise_for_status()
 
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise ValueError(
+                    f"Expected JSON response but got: {resp.text!r}"
+                ) from exc
+
             receipt = data.get("receipt")
             if receipt is None:
                 raise ValueError(f"No receipt in response: {data}")
             return receipt
 
         except requests.ConnectionError as exc:
-            last_exception = exc
             if attempt < MAX_RETRIES:
                 log.warning(
                     "Connection error on attempt %d; backing off %.1fs: %s",
@@ -120,7 +124,6 @@ def submit(payload_bytes: bytes, signature: str) -> str:
                 raise
 
         except requests.Timeout as exc:
-            last_exception = exc
             if attempt < MAX_RETRIES:
                 log.warning(
                     "Timeout on attempt %d; backing off %.1fs: %s",
@@ -130,12 +133,6 @@ def submit(payload_bytes: bytes, signature: str) -> str:
                 backoff *= 2
             else:
                 raise
-
-    # Should only be reached if all retries returned a retryable status code
-    raise requests.HTTPError(
-        f"All {MAX_RETRIES} attempts failed (last status: {resp.status_code})",
-        response=resp,
-    )
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -173,7 +170,7 @@ def main() -> None:
         log.error("Unexpected response: %s", exc)
         sys.exit(5)
 
-    log.info("Receipt: %s", receipt)
+    print(receipt)
 
 
 if __name__ == "__main__":

@@ -8,12 +8,12 @@ JSON-encoded payload in the body. All fields are required:
 
 ```json
 {
-    "timestamp": "2026-01-06T16:59:37.571Z",
-    "name": "Your name",
-    "email": "you@example.com",
-    "resume_link": "https://pdf-or-html-or-linkedin.example.com",
-    "repository_link": "https://link-to-github-or-other-forge.example.com/your/repository",
-    "action_run_link": "https://link-to-github-or-another-forge.example.com/your/repository/actions/runs/run_id"
+    "timestamp"       : "2026-01-06T16:59:37.571Z",
+    "name"            : "Your name",
+    "email"           : "you@example.com",
+    "resume_link"     : "https://pdf-or-html-or-linkedin.example.com",
+    "repository_link" : "https://link-to-github-or-other-forge.example.com/your/repository",
+    "action_run_link" : "https://link-to-github-or-another-forge.example.com/your/repository/actions/runs/run_id"
 }
 ```
 
